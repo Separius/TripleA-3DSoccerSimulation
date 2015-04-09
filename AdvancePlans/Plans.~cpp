@@ -1,0 +1,384 @@
+#include <Plans.h>
+
+Plans::Plans(WorldData* newWorldData, BasicPlayer* newBasicPlayer)
+{
+	pWorldData = newWorldData;
+	pBasicPlayer = newBasicPlayer;
+	role_Clear.initializeData(pWorldData, pBasicPlayer);
+	role_Pass.initializeData(pWorldData, pBasicPlayer);
+	role_Shoot.initializeData(pWorldData, pBasicPlayer);
+	role_dribble.initializeData(pWorldData, pBasicPlayer);
+	role_Block.initializeWorld(pWorldData, pBasicPlayer);
+	ballpos = pWorldData->basedCenter(pWorldData->ball());
+	myUid = pWorldData->my_id();
+	goalKeeper.initializeData(pWorldData, pBasicPlayer);
+	am_i_near = false;
+	AmINear();
+	foundOpps = pWorldData->mr_number_found_opponents();
+}
+
+
+
+int Plans::whereIsHe(int oppId)
+{
+	Point opponentha[5];
+	vector<int> foundOpp = pWorldData->mr_found_opponents();
+	for (int i = 0; i < foundOpp.size(); i++)
+	{
+		opponentha[i] = pWorldData->oppPositions[foundOpp[i] % foundOpps];
+	}
+	Point oppPos = opponentha[oppId % foundOpps];
+
+	char side;
+
+	if (pWorldData->ourPole1.getX() > 0)
+		side = 'r';
+	else
+		side = 'l';
+
+	if (oppPos.getX() >= 0)
+	{
+		if (oppPos.getX() > pWorldData->realVectors[15].getX() / 2)
+		{
+			if (side == 'r')
+				area = AREA_I;
+			else if (side == 'l')
+				area = AREA_IV;
+		} else
+		{
+			if (side == 'r')
+				area = AREA_II;
+			else if (side == 'l')
+				area = AREA_III;
+		}
+	} else
+	{
+		if (oppPos.getX() < pWorldData->realVectors[11].getX() / 2)
+		{
+			if (side == 'r')
+				area = AREA_IV;
+			else if (side == 'l')
+				area = AREA_I;
+		} else
+		{
+
+			if (side == 'r')
+				area = AREA_III;
+			else if (side == 'l')
+				area = AREA_II;
+		}
+	}
+	return area;
+}
+
+void Plans::start()
+{
+	/***************IF I AM NOT GOALER***************/
+	cout << "my id" << myUid % foundOpps << endl;
+	cout << "my id goalie role ? :" << pWorldData->mrRoles[myUid % foundOpps]
+			<< endl;
+	if (pWorldData->mrRoles[myUid % foundOpps] == MR_ROLE_GOALIE)
+	{
+		cout << ".........goalie......\n";
+		goalKeeper.decide();
+	} else
+	{
+		/***********IF I POSSES THE BALL*****************/
+		if (situation == ROLE_SITUATION_MINE)
+		{
+			cout << ".....I own it....\n";
+			if (pWorldData->mrRoles[myUid % foundOpps] == MR_ROLE_DEFENCE)
+			{
+				cout << "I am Defencer \n";
+				int tempValue = checkValue(myUid);
+
+				if (tempValue == 1)
+				{
+					cout << "Passing... \n";
+					role_Pass.passNow();
+					pWorldData->teamAction[myUid % foundOpps] = ACTION_PASS;
+				} else if (tempValue == 2)
+				{
+					cout << "Dribbling... \n";
+					pWorldData->teamAction[myUid % foundOpps] = ACTION_DRIBBLE;
+					role_dribble.decide();
+				} else if (tempValue == 3)
+				{
+					cout << "clearing... \n";
+					pWorldData->teamAction[myUid % foundOpps] = ACTION_CLEAR;
+					role_Clear.clearNow();
+				}
+			} else if (pWorldData->mrRoles[myUid % foundOpps]
+					== MR_ROLE_OFFENCE)
+			{
+				cout << "I am offencer \n";
+				role_Shoot.pointSelector();
+				if (role_Shoot.can_i_shoot == true)
+				{
+					cout << "Shooting... \n";
+					role_Shoot.shootNow();
+					pWorldData->teamAction[myUid % foundOpps] = ACTION_SHOOT;
+				} else
+				{
+					int tempValue = checkValue(myUid); //moshakhas mikonad ke alan chikar mikonim (pass/dribble/clear)
+
+					if (tempValue == 1)
+					{
+						cout << "Passing... \n";
+						pWorldData->teamAction[myUid % foundOpps] = ACTION_PASS;
+						role_Pass.passNow();
+					} else if (tempValue == 2)
+					{
+						cout << "Dribbling... \n";
+						pWorldData->teamAction[myUid % foundOpps]
+								= ACTION_DRIBBLE;
+						role_dribble.decide();
+					} else if (tempValue == 3)
+					{
+						cout << "clearing... \n";
+						pWorldData->teamAction[myUid % foundOpps]
+								= ACTION_CLEAR;
+						role_Clear.clearNow();
+					}
+				}
+			}
+		} else if (situation == ROLE_SITUATION_TEAMMATE)
+		{
+			cout << "....We own it.... \n";
+			cout << "Am I near ? " << am_i_near << endl;
+			if (am_i_near == false)
+			{
+				cout << "Positioning....\n";
+				positionMe();
+			} else if (pWorldData->mrRoles[(pWorldData->owner) % foundOpps]
+					== MR_ROLE_GOALIE)
+			{
+				cout << "Owner is goalie \n";
+				role_Pass.setUid(pWorldData->owner);
+				role_Pass.bestTeammateSelector();
+				int bestTmmId = role_Pass.bestTeammate;
+				if (bestTmmId == myUid)
+				{
+					cout << "recieving a pass... \n";
+					pBasicPlayer->stop();
+					//do nothing (stay where you are)
+				} else if (bestTmmId != -1)
+				{
+
+					if (role_Block.canIBlock() == true)
+					{
+						cout << "Blocking... \n";
+						role_Block.targetFinder();
+						role_Block.doDash();
+					} else
+					{
+						cout << "Positioning... \n";
+						positionMe();
+					}
+				} else
+				{
+					cout << "<Should I try ?>\n";
+					shouldITry(); //trying to rcieve the ball after clearing
+					cout << "</Should I try ?>\n";
+
+				}
+			} else if (pWorldData->mrRoles[(pWorldData->owner) % foundOpps]
+					== MR_ROLE_DEFENCE)
+			{
+				cout << "Owner is Defender \n";
+				int tempValue = checkValue(pWorldData->owner);
+				if (tempValue == 1)
+				{
+					role_Pass.setUid(pWorldData->owner);
+					role_Pass.bestTeammateSelector();
+					int bestTmm = role_Pass.bestTeammate;
+					if (bestTmm == myUid)
+					{
+						cout << "recieving a pass... \n";
+						pBasicPlayer->stop();
+						//do nothing (stay where you are)
+					} else
+					{
+						if (pWorldData->mrRoles[myUid % foundOpps]
+								== MR_ROLE_DEFENCE)
+						{
+							if (role_Block.canIBlock() == true)
+							{
+								cout << "Blocking... \n";
+								role_Block.targetFinder();
+								role_Block.doDash();
+							} else
+							{
+								cout << "Positioning... \n";
+								positionMe();
+							}
+						} else
+						{
+							cout << "Positioning... \n";
+							positionMe();
+						}
+					}
+				} else if (tempValue == 2)
+				{
+					if (role_Block.canIBlock() == true)
+					{
+						cout << "Blocking... \n";
+						role_Block.targetFinder();
+						role_Block.doDash();
+					} else
+					{
+						cout << "Positioning... \n";
+						positionMe();
+					}
+				} else if (tempValue == 3)
+				{
+					cout << "<Should I try ?>\n";
+					shouldITry();
+					cout << "</Should I try ?>\n";
+				}
+			} else if (pWorldData->mrRoles[pWorldData->owner % foundOpps]
+					== MR_ROLE_OFFENCE)
+			{
+				cout << "Owner is offender \n";
+				role_Shoot.setUid(pWorldData->owner);
+				role_Shoot.pointSelector();
+				Point tempPoint = role_Shoot.selectedPoint;
+				if (role_Shoot.getLineValue(ballpos, tempPoint) > 65)
+				{
+					cout << "Getting out of forbidden line ...(hanooz na)\n";
+					Line forbiddenLine;
+					forbiddenLine.setByPoints(ballpos, tempPoint);
+					//i should get away from that fuckin line                           ////////////////////////////////////////
+
+				} else
+				{
+					int tempValue = checkValue(pWorldData->owner);
+					if (tempValue == 1)
+					{
+						role_Pass.setUid(pWorldData->owner);
+						role_Pass.bestTeammateSelector();
+						int bestTmm = role_Pass.bestTeammate;
+						if (bestTmm == myUid)
+						{
+							cout << "recieving a pass...\n";
+							pBasicPlayer->stop();
+						} else if (bestTmm != -1)
+						{
+							if (pWorldData->mrRoles[myUid % foundOpps]
+									== MR_ROLE_OFFENCE)
+							{
+								cout << "Positioning...\n";
+								positionMe();
+							}
+						}
+					} else if (tempValue == 2)
+					{
+						if (role_Block.canIBlock() == true)
+						{
+							cout << "Blcoking...\n";
+							role_Block.targetFinder();
+							role_Block.doDash();
+						} else
+						{
+							cout << "Positioning...\n";
+							positionMe();
+						}
+					} else if (tempValue == 3)
+					{
+						cout << "<Should I try ?>\n";
+						shouldITry();
+						cout << "</Should I try ?>\n";
+					}
+				}
+			}
+		} else if (situation == ROLE_SITUATION_OPP)
+		{
+			cout << "Opp owns the ball\n";
+			cout << "Am I near ? " << am_i_near << endl;
+			if (am_i_near == false)
+			{
+				positionMe();
+				cout << "Positioning....\n";
+			} else
+			{
+				//boro topop ro azash begir
+				Point oppPos;
+				oppPos = pWorldData->basedCenter(pWorldData->opponent(
+						pWorldData->owner));
+				pBasicPlayer->go(oppPos.getX(), oppPos.getY());
+				pWorldData->teamAction[myUid] = ACTION_GO;
+				cout << "capturing the ball ....\n";
+			}
+		}
+
+		else //if no one owns the ball
+		{
+			if (am_i_near == false)
+			{
+				cout << "Positioning....\n";
+				positionMe();
+			} else
+			{
+				if (pWorldData->owner == myUid) //i WAS the owner
+				{
+					if (pWorldData->teamAction[myUid % foundOpps]
+							== ACTION_SHOOT)
+					{
+						cout << "capturing the ball ....\n";
+						pBasicPlayer->go(ballpos.getX(), ballpos.getY());
+					} else if (pWorldData->teamAction[myUid % foundOpps]
+							== ACTION_PASS || pWorldData->teamAction[myUid
+							% foundOpps] == ACTION_CLEAR)
+					{
+						cout << "Positioning....\n";
+						blockOrPos();
+					} else if (pWorldData->teamAction[myUid % foundOpps]
+							== ACTION_DRIBBLE)
+					{
+						cout << "going after the ball....\n";
+						role_dribble.doDash();
+					}
+				} else if (pWorldData->owner != -1) // means we ownded it  if owner == -1 then they owned it but what if no one owns it ?
+				{
+					if (pWorldData->teamAction[pWorldData->owner % foundOpps]
+							== ACTION_SHOOT)
+					{
+						blockOrPos();
+					} else if (pWorldData->teamAction[pWorldData->owner
+							% foundOpps] == ACTION_PASS)
+					{
+						role_Pass.setUid(pWorldData->owner);
+						role_Pass.bestTeammateSelector();
+						if (role_Pass.bestTeammate == myUid)
+						{
+							pBasicPlayer->stop();
+							cout << "receiveing a pass.....\n";
+						} else //if it is not for me
+						{
+							blockOrPos();
+						}
+					} else if (pWorldData->teamAction[pWorldData->owner
+							% foundOpps] == ACTION_CLEAR)
+					{
+						cout << "<Should I try ?>\n";
+						shouldITry();
+						cout << "</Should I try ?>\n";
+					} else if (pWorldData->teamAction[pWorldData->owner
+							% foundOpps] == ACTION_DRIBBLE)
+					{
+						blockOrPos();
+					}
+				} else if (pWorldData->owner == -1) //no one owns the ball
+				{
+					if (am_i_near == false)
+						blockOrPos();
+					else if (am_i_near == true)
+					{
+						pBasicPlayer->go(ballpos.getX(), ballpos.getY());
+						cout << "go after the ball....\n";
+					}
+				}
+			}
+		}
+	}
+}
